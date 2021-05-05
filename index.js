@@ -27,7 +27,9 @@ export default {
     },
     async onAfterPlaceOrder (payload) {
       this.confirmation = payload.confirmation;
-      this.beforePlaceOrderToFondy(payload.confirmation);
+      if (config.fondy.paymentMethodCode === this.order.addressInformation.payment_method_code) {
+        this.beforePlaceOrderToFondy(payload.confirmation);
+      }
       this.$store.dispatch('checkout/setThankYouPage', true);
       this.$store.dispatch('user/getOrdersHistory', { refresh: true, useCache: true });
       Logger.debug(payload.order)();
