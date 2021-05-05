@@ -1,7 +1,8 @@
 import config from 'config';
 import crypto from 'crypto';
 import ksort from 'ksort';
-import { mapGetters } from 'vuex';
+import { Logger } from '@vue-storefront/core/lib/logger';
+import { currentStoreView } from '@vue-storefront/core/lib/multistore';
 
 const addFondyCheckout = () => {
   let recaptchaScript = document.createElement('script');
@@ -17,46 +18,38 @@ export default {
   mounted () {
     addFondyCheckout();
   },
-  computed: {
-    ...mapGetters({
-      totals: 'themeCart/getTotals'
-    })
-  },
   methods: {
-    onDoPlaceOrder (additionalPayload) {
-      console.log(additionalPayload);
-      if (this.$store.state.cart.cartItems.length === 0) {
-        this.notifyEmptyCart();
-        this.$router.push(this.localizedRoute('/'));
-      } else {
-        if (this.getPaymentMethod() === config.fondy.paymentMethodCode) {
-          this.beforePlaceOrderToFondy();
-        } else {
-          this.payment.paymentMethodAdditional = additionalPayload;
-          this.placeOrder();
-        }
-      }
+    totals () {
+      return this.order.products.reduce((result, product) => {
+        result += product.final_price;
+        return result;
+      }, 0);
     },
-    beforePlaceOrderToFondy () {
-      if (window.fondy) {
+    async onAfterPlaceOrder (payload) {
+      this.confirmation = payload.confirmation;
+      this.beforePlaceOrderToFondy(payload.confirmation);
+      this.$store.dispatch('checkout/setThankYouPage', true);
+      this.$store.dispatch('user/getOrdersHistory', { refresh: true, useCache: true });
+      Logger.debug(payload.order)();
+    },
+    beforePlaceOrderToFondy (order) {
+      if (window.fondy && order) {
         let parent = document.getElementById('app');
         let wrapper = document.createElement('div');
         wrapper.setAttribute('id', 'checkout_wrapper');
         parent.appendChild(wrapper);
-        this.checkoutInit();
+        this.checkoutInit(order);
       }
     },
     getSignature ($data, $password, $encoded = true) {
-      console.log($data);
       $data = Object.values($data).filter(($var) => {
         return $var !== '' && $var !== null;
       });
       $data = ksort($data);
       let $str = $password;
       $data.forEach(item => {
-        $str += '|' + item;
+        $str += ' |' + item;
       });
-      console.log($str);
       if ($encoded) {
         let shasum = crypto.createHash('sha1');
         return shasum.update($str).digest('hex');
@@ -64,20 +57,33 @@ export default {
         return $str;
       }
     },
-    checkoutInit () {
-      if (window.fondy) {
-        const addInfo = {
-          customer_name: `${this.payment.firstName} ${this.payment.lastName}`,
-          company: this.payment.company ? this.payment.company : '',
-          street: `${this.shipping.streetAddress} ${this.shipping.apartmentNumber ? this.shipping.apartmentNumber : this.shipping.streetAddress}`,
-          city: this.shipping.city,
-          region: this.payment.region_code ? this.payment.region_code : ''
+    getProductSkus (products) {
+      return products.reduce((result, product) => {
+        result += result ? `, ${product.sku}` : product.sku;
+        return result;
+      }, '');
+    },
+    checkoutInit (order) {
+      if (window.fondy && order) {
+        const storeView = currentStoreView();
+        const merchantData = {
+          Fullname: `${this.payment.firstName} ${this.payment.lastName}`
         };
-        console.log(addInfo);
+        const addInfo = {
+          customer_zip: this.payment.zipCode,
+          customer_address: `${this.shipping.streetAddress} ${this.shipping.apartmentNumber ? this.shipping.apartmentNumber : this.shipping.streetAddress}`,
+          customer_state: this.payment.state,
+          customer_country: this.payment.country,
+          phonemobile: this.payment.phoneNumber ? this.payment.phoneNumber : '',
+          account: this.payment.emailAddress ? this.payment.emailAddress : '',
+          products_sku: this.getProductSkus(this.$store.state.cart.cartItems),
+          order_id: order.orderNumber,
+          order_total: this.totals() || 1
+        };
         const Options = {
           options: {
             methods: ['card', 'banklinks_eu', 'wallets', 'local_methods'],
-            methods_disabled: [],
+            methods_disabled: ['banklinks_eu', 'wallets', 'local_methods'],
             card_icons: ['mastercard', 'visa'],
             active_tab: 'card',
             fields: false,
@@ -88,22 +94,32 @@ export default {
           params: {
             merchant_id: config.fondy.merchant_id,
             required_rectoken: 'y',
-            currency: 'UAH',
-            amount: 100,
-            lang: 'uk',
-            order_id: `PWA Order #${new Date().getTime()}`,
+            currency: storeView.i18n.currencyCode,
+            amount: this.totals() * 100 || 100,
+            lang: String(storeView.i18n.defaultLocale).slice(0, 2),
+            order_id: `${order.orderNumber}#${new Date().getTime()}`,
             product_id: 'Fondy',
-            order_desc: this.$t('Pay order №'),
+            order_desc: this.$t('Pay order №') + order.orderNumber,
             sender_email: this.payment.emailAddress,
-            merchant_data: JSON.stringify(addInfo)
+            merchant_data: JSON.stringify(merchantData),
+            customer_data: {
+              customer_name: `${this.payment.firstName} ${this.payment.lastName}`,
+              customer_zip: this.payment.zipCode,
+              customer_address: `${this.shipping.streetAddress} ${this.shipping.apartmentNumber ? this.shipping.apartmentNumber : this.shipping.streetAddress}`,
+              customer_city: this.payment.city,
+              customer_state: this.payment.state,
+              customer_country: this.payment.country,
+              phonemobile: this.payment.phoneNumber ? this.payment.phoneNumber : '',
+              email: this.payment.emailAddress ? this.payment.emailAddress : '',
+              products_sku: this.getProductSkus(this.$store.state.cart.cartItems),
+              order_id: order.orderNumber,
+              order_total: this.totals() || 1
+            }
           }
         };
-        console.log(Options);
-        let signature = this.getSignature(Options.params, config.fondy.secret_key);
-        Options.params.signature = signature;
-        console.log(signature);
-        console.log(Options);
-
+        Options.params.reservation_data = Buffer.from(JSON.stringify(addInfo) || '').toString('base64');
+        Options.params.signature = this.getSignature(Options.params, config.fondy.secret_key);
+        Object.assign(Options.options, config.fondy.options || {});
         var app = window.fondy('#checkout_wrapper', Options)
           .$on('success', (model) => {
             console.log('success event handled');
@@ -112,6 +128,10 @@ export default {
 
             if (order_status === 'approved') {
               console.log('Order is approved. Do somethng on approve...');
+              setTimeout(() => {
+                window.fondyApp.$destroy();
+                document.getElementById('checkout_wrapper').remove();
+              }, 2000);
             }
           })
           .$on('error', (model) => {
@@ -124,7 +144,16 @@ export default {
               ', description: ' +
               response_description
             );
+            this.showNotification({
+              type: 'warning',
+              message: this.$t('Order is declined: ' + response_code + ', description: ' + response_description)
+            });
+            setTimeout(() => {
+              window.fondyApp.$destroy();
+              document.getElementById('checkout_wrapper').remove();
+            }, 2000);
           });
+        window.fondyApp = app;
       }
     }
   }
