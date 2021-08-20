@@ -89,7 +89,7 @@ export default {
             card_icons: ['mastercard', 'visa'],
             active_tab: 'card',
             fields: false,
-            full_screen: true,
+            fullScreen: true,
             button: true,
             email: true
           },
