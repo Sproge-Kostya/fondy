@@ -99,7 +99,7 @@ export default {
             currency: storeView.i18n.currencyCode,
             amount: this.totals() * 100 || 100,
             lang: String(storeView.i18n.defaultLocale).slice(0, 2),
-            order_id: `${order.orderNumber}#${new Date().getTime()}`,
+            order_id: `${order.orderNumber}#${Math.round(+new Date().getTime() / 1000)}`,
             product_id: 'Fondy',
             order_desc: this.$t('Pay order №') + order.orderNumber,
             sender_email: this.payment.emailAddress,
