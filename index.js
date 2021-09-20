@@ -105,6 +105,7 @@ export default {
             sender_email: this.payment.emailAddress,
             merchant_data: JSON.stringify(merchantData),
             preauth: 'Y',
+            server_callback_url: config.fondy.serverCallbackUrl,
             customer_data: {
               customer_name: `${this.payment.firstName} ${this.payment.lastName}`,
               customer_zip: this.payment.zipCode,
