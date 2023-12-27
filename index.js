@@ -20,10 +20,7 @@ export default {
   },
   methods: {
     totals () {
-      return this.order.products.reduce((result, product) => {
-        result += product.final_price;
-        return result;
-      }, 0);
+      return this.order.totals.find(item => item.code === 'grand_total').value;
     },
     async onAfterPlaceOrder (payload) {
       this.confirmation = payload.confirmation;
